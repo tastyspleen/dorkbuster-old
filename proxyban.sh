@@ -1,0 +1,1 @@
+../proxyban/proxyban.sh

@@ -1,0 +1,19 @@
+Welcome.  This is a prerelease of dorkbuster.
+
+There isn't much documentation yet, sorry.
+
+See the files, users-example.cfg and server-example.cfg for
+information on two files you will need to rename and edit
+to get dorkbuster running.
+
+You'll also need ruby to run dorkbuster.  Check the version
+of ruby installed in your system with: ruby --version
+
+You'll want ruby version 1.8.1 or greater.
+
+
+Regards,
+
+Bill
+<billk@cts.com>
+

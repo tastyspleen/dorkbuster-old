@@ -1,0 +1,115 @@
+#### change log (of sorts) ###################################################
+#
+# In V0.3.9:
+#+add:  added dynamic module loading for user data, wallfly filters, etc.
+#+add:  embedded wallfly!
+#+add:  stuff shortcuts !all and !99
+#+add:  status forces rcon status update if stale gamestate
+#
+# In V0.3.6:
+#+fix:  Fixed sorting of most-recent/most-often aka's (broken in V0.3.5)
+#+add:  Added dj, 1shot, and pinkdotts accounts from pretz' source
+#
+# In V0.3.5:
+#+add:  Limited number of aka's printed out in status
+#+add:  Added all available cmds to 'help' text
+#+add:  Removed 'gate' symbol from solid-object detect in text-mode quake
+#
+# In V0.3.4:
+#+add:  alter/show dmflags by name
+#+add:  remove extraneous linefeed from rcon responses
+#+add:  "me|myself" for shoot & kick
+#+add:  "ned" works for flanders npc
+#
+# In V0.3.3:
+#+add:  color-coded status
+#+add:  sky & clouds as static npc's :)
+#+add:  "thin air" now missed as "shot at"
+#
+# In V0.3.2:
+#+add:  npcs ! =D
+#+add:  simple splash damage
+#+add:  ammo for weaps, *CLICK*!
+#+add:  connect time & frags per hour (or min.) in score
+#+add:  alive/dead status in score
+#+fix:  shoot self should take away frag
+#+fix:  "use" should rejoin first, then use
+#+fix:  "kick" should clear score
+#
+# In V0.3.1:
+#+add:  (heh) add kick of db clients :)
+#
+#+add:  (hehe) added silly q2 text mode game :)
+#
+# In V0.3.0:
+#+bug:  failed passwd doesn't go back to login !?
+#       (This was fixed in V0.2.1, but didn't make it into the
+#       version on pretz' machine.)
+#
+#+add:  report # clients connected to server in prompt (and added dynamic
+#       prompt support to simple_terminal.rb)
+#
+#+add:  "stale data" warning on status if no updates from server in awhile?
+#
+#+add:  don't devour leading spaces when echoing commands (chat)
+#
+#+add:  Non-hack VT100 support... (color coding removed from log file & stdout)
+#
+#+add:  Name filtering on 'names' cmd...
+#
+#+bug:  Names in rcon status can exceed 15 chars (and are ignored by current regexp)
+#     --- ----- ---- --------------- ------- --------------------- ------
+#       3     4   89 greatlips4u2taste     13 68.58.100.187:1025    31142
+#       4     4  123 RuthLess          uoou     43 24.95.76.86:27901     21643
+#
+#-add:  [NOT ADDED] Background UDP quake command I/O, so no lag when server down?
+#       (Worked out approach, but decided against due to added complexity
+#       in program logic.)
+#
+#-add:  [NOT ADDED] Muting & banning based on IP, (re-)enforced on connect
+#       pretz: I remember a feature I wish I had...
+#       quadz: yeas?
+#       pretz: ice_god's a pain sometimes, so I mute him hoping he'll chill out.
+#       pretz: But he just reconnects to dodge the mute penalty time.
+#       pretz: A timed mute on connect would do it.
+#       pretz: And to be really effective, console should say something about muting
+#       the person when the connection is made and how long they have left on the mute.
+#       (Pretz is handling this via fluff...)
+#
+# In V0.2.2:
+#+new: (pretz) Encased name in "'s for status...
+#
+# In V0.2.1:
+#+add:  VT100 color coding of chat messages? (http://www.termsys.demon.co.uk/vtansi.htm)
+#       (quick hack)
+#
+#+bug:  Fixed bug introduced in incomplete fix related to
+#       protection of peeraddr stuff (in failed password attempt.)
+#
+# In V0.2:
+#+bug: doesn't write to client somehow unless client sends chars??
+#      (perhaps just on backspacing, when hitting zero chars in
+#       buffer... then flush write)
+#
+#+fix: should lock gamestate.dat during reads/writes?  (argh... no...
+#      hmm, would be nice if multiple Dork Buster processes to different
+#      servers could use same names-to-ips database... but different
+#      client/server-state data...)
+#      For now: uses server_nickname to create uniquely named database files
+#
+#+fix: peeraddr can throw too... guard those
+#
+#+fix: don't echo weird terminal chars!!
+#
+#+fix: status should do a "real" status with aka's not the rcon status default
+#
+#+new: db search: IP for names, name for IPs...
+#     02:49:00 pretz: Two types: current client (or IP) to name...
+#     02:49:10 pretz: and name to IP's used in the passed.
+#     02:49:23 quadz: yeah, it's really easy to add this stuff... now that the basic deal is functional
+#     02:49:44 pretz: So I could see if someone's been a fake frosty
+#
+#+new: rcon_clients and rcon_all_clients ;)
+#
+##############################################################################
+

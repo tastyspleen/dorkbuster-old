@@ -1,0 +1,8 @@
+#!/bin/sh
+
+# should be run from dorkbuster root directory,
+# with DORKBUSTER_ environment variables set
+# (see rundroid.rb)
+
+exec ruby -Iwallfly wallfly/wallfly.rb
+

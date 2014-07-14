@@ -1,0 +1,14 @@
+
+
+module Dataserver
+
+  UPDATE_SERVER_IP = "127.0.0.1"
+  UPDATE_SERVER_PORT = 44337
+  UPDATE_SERVER_PASSWORD_FILE = ".update-users"
+
+  QUERY_SERVER_IP = "127.0.0.1"  # WAS: "0.0.0.0"
+  QUERY_SERVER_PORT = 44338
+
+end
+
+

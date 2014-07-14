@@ -1,0 +1,5 @@
+#!/bin/sh
+
+cd ../server-status
+ruby server-status.rb
+
