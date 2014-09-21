@@ -103,7 +103,7 @@ qy = QueryClient.new(Logger.new)
 # rows = qy.playerseen_grep(ARGV.join(" "), 9999)
 
 rows = []
-ARGV.each {|term| rows += qy.playerseen_grep(term, 9999)}
+ARGV.each {|term| rows += qy.playerseen_grep(term, 99999)}
 
 if rows.length > 0
   if coalesce_names
