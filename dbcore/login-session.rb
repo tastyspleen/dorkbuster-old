@@ -1,4 +1,5 @@
 
+require 'uri'
 require 'dbcore/obj-encode'
 
 module RconLoginSession
@@ -106,6 +107,13 @@ module RconLoginSession
   end
 
   def session_handle_shell(line)
+    # Bots are allowed to send uri-encoded lines prefixed with /x
+    # This is the only way to send Q2 conchar special characters,
+    # as the terminal input handler normally strips control chars
+    # and high-bit chars.
+    if (@rls_user.is_ai || @rls_user.is_db_devel) && (line =~ %r{\A/x\s+(.*)\z})
+      line = URI.unescape($1)
+    end
     if (line =~ /\A\s*(\S+)\s*(.*)\z/)
       cmd, args = $1, $2
       begin
