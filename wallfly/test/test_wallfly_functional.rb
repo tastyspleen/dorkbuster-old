@@ -280,7 +280,7 @@ class TestWallflyFunctional < Test::Unit::TestCase
 	     %{12:34:00 quadz: wf, set\r\n} +
 	     WF_LOGOUT_STR, sv_client)
     wf.run
-    expect( %{illegal characters in varname\r}, sv_client )
+    expect( %{illegal characters in varname "bad?varname"\r}, sv_client )
     expect( %{"plover" is not set\r}, sv_client )
     expect( %{"plover" => 45\r}, sv_client )
     expect( %{"plover" => 45\r}, sv_client )
@@ -337,6 +337,184 @@ class TestWallflyFunctional < Test::Unit::TestCase
     expect( DMFLAGS_CMD_STR + defflags_str + "\r", sv_client )
     expect( FASTMAP_CMD_STR + %{cc\r}, sv_client )
     expect( %{cyas!\r}, sv_client )
+  end
+
+  def test_map_skip_minclients
+    wf, sv_client = @wf, @sv_client
+
+    wf.squelch_replylog = true
+    
+    # sanity check:
+    dbline = DBLine.new("12:34:01 * Fraglimit hit. ncl:10 apl:1")
+    assert( dbline.is_map_over? )
+    
+    defflags_str = "-pu +a +h -ia +fd +ip +qd +sf +ws"
+    
+    sendstr(
+      %{12:34:00 quadz: wf set delay/same_map 10\r\n} +
+      %{12:34:00 quadz: wf set maps/teenymap/minclients 2\r\n} +
+      %{12:34:00 quadz: wf set maps/smallmap/minclients 3\r\n} +
+      %{12:34:00 quadz: wf set maps/medimap/minclients 5\r\n} +
+      %{12:34:00 quadz: wf set maps/largemap/minclients 8\r\n} +
+      %{12:34:00 quadz: wf set maps/megamap/minclients 12\r\n} +
+      %{12:34:00 quadz: wf defflags #{defflags_str}\r\n} +
+      %{12:34:00 quadz: wf votemaps-set teenymap smallmap medimap largemap megamap\r\n} +
+      %{12:34:00 quadz: wf nextmap megamap largemap medimap smallmap teenymap -repeat\r\n} +
+      %{12:34:01 * Fraglimit hit. ncl:10 apl:1\r\n} +
+      %{12:35:01 * Timelimit hit. ncl:10 apl:1\r\n} +
+      %{12:36:01 * Fraglimit hit. ncl:10 apl:1\r\n} +
+      %{12:37:01 * Timelimit hit. ncl:10 apl:1\r\n} +
+      %{12:38:01 * Fraglimit hit. ncl:10 apl:1\r\n} +
+      %{12:39:01 * Timelimit hit. ncl:10 apl:1\r\n} +
+      WF_LOGOUT_STR, sv_client
+    )
+    wf.run
+
+    # We have apl:1, so we meet NONE of the maps minclients criteria.
+    # Leaving us with teenymap as the initial nearest fit, then
+    # the next largest map, and so on, until we run out.
+    
+    expect( %{"delay/same_map" => 10\r}, sv_client )
+    expect( %{"maps/teenymap/minclients" => 2\r}, sv_client )
+    expect( %{"maps/smallmap/minclients" => 3\r}, sv_client )
+    expect( %{"maps/medimap/minclients" => 5\r}, sv_client )
+    expect( %{"maps/largemap/minclients" => 8\r}, sv_client )
+    expect( %{"maps/megamap/minclients" => 12\r}, sv_client )
+    expect( %{defflags => #{defflags_str}\r}, sv_client )    
+  # expect( %{votemaps => largemap medimap megamap smallmap teenymap\r}, sv_client )
+  # expect( %{nextmap => megamap largemap medimap smallmap teenymap -repeat\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{teenymap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{smallmap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{medimap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{largemap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{megamap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{largemap\r}, sv_client )  # at this point it's given up and just gone with the next in the list (because ALL maps have now been played too recently)
+    expect( %{cyas!\r}, sv_client )
+
+    $wf_cur_time += (10 * 60)
+
+    assert_equal( [], wf.get_random_allowed_maplist )  # not enough players for any
+    
+    sendstr(
+      %{12:34:00 quadz: wf nextmap megamap largemap medimap smallmap teenymap -repeat\r\n} +
+      %{12:34:01 * Fraglimit hit. ncl:10 apl:5\r\n} +
+      %{12:35:01 * Fraglimit hit. ncl:10 apl:5\r\n} +
+      %{12:36:01 * Fraglimit hit. ncl:10 apl:5\r\n} +
+      %{12:37:01 * Fraglimit hit. ncl:10 apl:5\r\n} +
+      %{12:38:01 * Fraglimit hit. ncl:10 apl:5\r\n} +
+      %{12:39:01 * Fraglimit hit. ncl:10 apl:5\r\n} +
+      WF_LOGOUT_STR, sv_client
+    )
+    wf.run
+
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{medimap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{smallmap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{teenymap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{largemap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{megamap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{largemap\r}, sv_client )  # at this point it's given up and just gone with the next in the list (because ALL maps have now been played too recently)
+    expect( %{cyas!\r}, sv_client )
+
+    
+    $wf_cur_time += (10 * 60)
+
+    assert_equal( %w[teenymap smallmap medimap].sort, wf.get_random_allowed_maplist.sort )
+
+    
+    sendstr(
+      %{12:34:00 quadz: wf nextmap megamap largemap medimap smallmap teenymap -repeat\r\n} +
+      %{12:34:01 * bobo the chimp: mymap megamap           [3|86.75.30.9]\r\n} +
+      %{12:34:01 * Fraglimit hit. ncl:10 apl:3\r\n} +
+      %{12:34:01 * bobo the chimp: mymap megamap           [3|86.75.30.9]\r\n} +
+      %{12:34:01 * ultran00b: mymap largemap          [4|86.75.30.10]\r\n} +
+      %{12:34:01 * Fraglimit hit. ncl:10 apl:2\r\n} +
+      %{12:34:01 * bobo the chimp: mymap megamap           [3|86.75.30.9]\r\n} +
+      %{12:34:01 * ultran00b: mymap largemap          [4|86.75.30.10]\r\n} +
+      %{12:34:01 * hootenanny: mymap medimap           [5|86.75.30.11]\r\n} +
+      %{12:34:01 * Fraglimit hit. ncl:10 apl:1\r\n} +
+      WF_LOGOUT_STR, sv_client
+    )
+    wf.run
+
+    mega_needed = (12 * Wallfly::MYMAP_APL_LIMIT_REDUCE).round
+    large_needed = (8 * Wallfly::MYMAP_APL_LIMIT_REDUCE).round
+    medi_needed = (5 * Wallfly::MYMAP_APL_LIMIT_REDUCE).round
+    expect( %{rcon say nextmap => megamap megamap largemap medimap smallmap teenymap ...\r}, sv_client )
+    expect( /say_person cl 3 BTW: Map 'megamap' will be skipped if there are not at least #{mega_needed} active players/, sv_client )
+    expect( %{rcon say Sorry, skipping map 'megamap' because not enough active players.\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{smallmap\r}, sv_client )
+    
+    expect( %{rcon say nextmap => megamap teenymap megamap largemap medimap smallmap ...\r}, sv_client )
+    expect( /say_person cl 3 BTW: Map 'megamap' will be skipped if there are not at least #{mega_needed} active players/, sv_client )
+    expect( %{rcon say nextmap => megamap largemap teenymap megamap largemap medimap smallmap ...\r}, sv_client )
+    expect( /say_person cl 4 BTW: Map 'largemap' will be skipped if there are not at least #{large_needed} active players/, sv_client )
+    expect( %{rcon say Sorry, skipping map 'megamap', and 1 other, because not enough active players.\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{teenymap\r}, sv_client )
+
+    expect( %{rcon say nextmap => megamap megamap largemap medimap smallmap teenymap ...\r}, sv_client )
+    expect( /say_person cl 3 BTW: Map 'megamap' will be skipped if there are not at least #{mega_needed} active players/, sv_client )
+    expect( %{rcon say nextmap => megamap largemap megamap largemap medimap smallmap teenymap ...\r}, sv_client )
+    expect( /say_person cl 4 BTW: Map 'largemap' will be skipped if there are not at least #{large_needed} active players/, sv_client )
+    expect( %{rcon say nextmap => megamap largemap medimap megamap largemap medimap smallmap teenymap ...\r}, sv_client )
+    expect( /say_person cl 5 BTW: Map 'medimap' will be skipped if there are not at least #{medi_needed} active players/, sv_client )
+    # NOTE: despite intending to skip medimap, we end up picking it anyway, because
+    # small and teeny have been played too recently, so we fell back to medi as the
+    # best available fit:
+  # expect( %{rcon say Sorry, skipping map 'megamap', and 2 others, because not enough active players.\r}, sv_client )
+    expect( %{rcon say Sorry, skipping map 'megamap', and 1 other, because not enough active players.\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{medimap\r}, sv_client )
+
+    expect( %{cyas!\r}, sv_client )
+
+    
+    $wf_cur_time += (10 * 60)
+    
+    sendstr(
+      %{12:34:00 quadz: wf nextmap megamap largemap medimap smallmap teenymap -repeat\r\n} +
+      %{12:34:01 * Timelimit hit. ncl:2 apl:0\r\n} +
+      %{12:34:01 * Timelimit hit. ncl:2 apl:0\r\n} +
+      %{12:34:01 * Timelimit hit. ncl:2 apl:0\r\n} +
+      %{12:34:01 * Timelimit hit. ncl:2 apl:0\r\n} +
+      %{12:34:01 * Timelimit hit. ncl:2 apl:0\r\n} +
+      %{12:34:01 * Timelimit hit. ncl:2 apl:0\r\n} +
+      WF_LOGOUT_STR, sv_client
+    )
+    wf.run
+
+    # Special situation: With active_players zero, we remove the
+    # map from the recently played tracking (since presumably
+    # nobody was there to enjoy it, it shouldn't be off limits
+    # when someone does finally join and mymap it.)
+  # expect( %{nextmap => megamap largemap medimap smallmap teenymap -repeat\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{teenymap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{teenymap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{teenymap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{teenymap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{teenymap\r}, sv_client )
+    expect( DMFLAGS_CMD_STR + defflags_str + %{\r}, sv_client )
+    expect( FASTMAP_CMD_STR + %{teenymap\r}, sv_client )
+    expect( %{cyas!\r}, sv_client )
+
   end
 
   def test_enforce_delay_between_repeated_ia

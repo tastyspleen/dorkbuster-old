@@ -468,6 +468,9 @@ class RconServer
       line.gsub!(/\A3=\[CAMERA\]/, "3=")  # remove leading [CAMERA] from wod-x spectators
       line.gsub!(/\A3=\[DEAD\] /, "3=")  # remove leading [DEAD] (and trailing whitespace) from action q2 spectators
       line.gsub!(/\A3=(.*) \[(Observer|Red|Blue)\]:/, "3=\\1:")  # remove trailing [Observer] etc. from jailbreak
+      if line =~ /\A2=(Timelimit|Fraglimit|JailPoint Limit)/
+        line << (" " + @game_state.gen_active_clients_str)
+      end
       sv_nick = ENV['DORKBUSTER_SERVER_NICK']
       # horrible mod-specific kludge based on sv_nick
       if sv_nick =~ /freeze/i

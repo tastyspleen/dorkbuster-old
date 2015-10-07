@@ -9,6 +9,7 @@ class GameStateDB
 
   STATUS_ALIASES_LIMIT = 10
   TOP_ALIASES_LIMIT = 5
+  ACTIVE_PLAYERNAME_CUTOFF_SECS = (60 * 3)  # arbitrary
 
   attr_reader :client_state, :server_state
 
@@ -18,6 +19,7 @@ class GameStateDB
     @client_state = []
     @server_state = ServerState.new
     @akas_for_ip_cache = MRUCache.new(100)
+    @active_playernames = {}
     @up = UpdateClient.new(@logger)
     @qy = QueryClient.new(@logger)
     @up.connect
@@ -163,12 +165,15 @@ class GameStateDB
 
   def log_frag(inflictor, victim, method_str)
     unless playername_is_bot?(inflictor)
+      record_active_playername(inflictor)
+      record_active_playername(victim) unless playername_is_bot?(victim)
       @up.frag(inflictor, victim, method_str, @sv_nick, Date.today, 1)
     end
   end
 
   def log_suicide(victim, method_str)
     unless playername_is_bot?(victim)
+      record_active_playername(victim)
       @up.suicide(victim, method_str, @sv_nick, Date.today, 1)
     end
   end
@@ -183,12 +188,42 @@ class GameStateDB
     "just-now"
   end
 
+  def gen_active_clients_str
+    acl = active_clients.length
+    apl = @active_playernames.length
+    "ncl:#{acl} apl:#{apl}"
+  end
+
   private
 
   def playername_is_bot?(name)
     name[0..4] == "[BOT]"
   end
 
+  def prune_inactive_playernames(cutoff)
+    @active_playernames.delete_if {|k,v| v < cutoff}    
+  end
+  
+  # NOTE: active_playernames tracking is not guaranteed to be super precise.
+  # We intend to use the active_playernames count as a rough guide for
+  # map selection.
+  def record_active_playername(name)
+    curtime = Time.now.to_i
+    prune_inactive_playernames(curtime - ACTIVE_PLAYERNAME_CUTOFF_SECS)
+    @active_playernames[name] = curtime
+  end
+
+  def purge_active_playername(name)
+    @active_playernames.delete name
+  end
+  
+  def rename_active_playername(oldname, newname)
+    if @active_playernames.key?(oldname)
+      @active_playernames[newname] = @active_playernames[oldname]
+      @active_playernames.delete oldname
+    end
+  end
+  
   def playerseen_times_to_relative(rows)
     # playername servername ip hostname first_seen last_seen times_seen
     rows.each do |row|
@@ -273,15 +308,16 @@ class GameStateDB
       end
     end
   end
-
+  
   def log_client_connect(cl)
     akas = get_top_akas_for_ip(cl.ip, cl.name).join(", ")
     akas = "(aka: #{akas})" unless akas.empty?
-    log(fmt_client_status(cl, "CONNECT", akas))
+    log(fmt_client_status(cl, "CONNECT", gen_active_clients_str + " " + akas))
   end
 
   def log_client_disconnect(cl)
-    log(fmt_client_status(cl, "DISCONNECT", "score:#{cl.score} ping:#{cl.ping}"))
+    purge_active_playername(cl.name)
+    log(fmt_client_status(cl, "DISCONNECT", gen_active_clients_str + " score:#{cl.score} ping:#{cl.ping}"))
   end
 
   def log_client_enter(cl)
@@ -291,6 +327,7 @@ class GameStateDB
 
   def log_client_name_change(cl, oldname)
     register_name_for_ip(cl.name, cl.ip, true)
+    rename_active_playername(oldname, cl.name)
     log(fmt_client_status(cl, "NAME_CHANGE", "was: #{oldname}"))
   end
 

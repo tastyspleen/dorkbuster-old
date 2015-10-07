@@ -358,7 +358,7 @@ class CompiledBan
         dat[1] ||= matched
       when TYPE_NAMENE
         dat[1] = true if dat[1].nil?
-	dat[1] &&= matched
+        dat[1] &&= matched
       end
     end
     def trigger?
@@ -423,12 +423,13 @@ end
 
 class Wallfly
   attr_reader :db, :bans
-  attr_accessor :debounce_nextmap_trigger
+  attr_accessor :debounce_nextmap_trigger, :squelch_replylog
 
   SHOW_NUM_NEXTMAPS = 10
   NEXTMAP_TRIGGER_DEBOUNCE_THRESHOLD_SECS = 10
   DMFLAGS_CMD_STR = %{dmflags }
   FASTMAP_CMD_STR = %{rcon gamemap }
+  ADMIN_NAMES = %w[quadz]  # TODO: load from config
 
   NameChangeTrack = Struct.new(:name, :time)
 
@@ -450,6 +451,7 @@ class Wallfly
   end
 
   def reset
+    @squelch_replylog = false
     @maprot = MapRot.new
     hook_maprot_defer_procs
     @votemaps = {}
@@ -488,10 +490,12 @@ class Wallfly
     @last_ws_time = Time.at(0)
     @last_h_time = Time.at(0)
     @last_invite_time = Hash.new(Time.at(0))
+    @last_played_mapname = nil
     @map_last_played = Hash.new(Time.at(0))
     @name_change_track = []
     @proxy_check_track = {}
     @proxy_check_last_prune_time = Time.at(0)
+    @active_player_count = nil
     @done = false
   end
 
@@ -516,18 +520,11 @@ class Wallfly
         @maprot   = ystore["maprot"]   || @maprot
         hook_maprot_defer_procs
         @votemaps = ystore["votemaps"] || @votemaps
-        vars_ = ystore["vars"] || {}
-        # old scheme resulted in a proliferation of keys with empty values
-        # ...let's clean them up.  This code can be deleted as this cleanup
-        # is a one-shot deal.
-        empties = []
-        vars_.each_pair {|k,v| empties << k if v.to_s.strip.empty?}
-        empties.each {|k| vars_.delete k}
-        # end cleanup code
-        @vars.merge!(vars_)
+        @vars.merge!( ystore["vars"] || {} )
         @last_ia_time = ystore["last_ia_time"] || @last_ia_time
         @last_ws_time = ystore["last_ws_time"] || @last_ws_time
         @last_h_time = ystore["last_h_time"] || @last_h_time
+        @last_played_mapname = ystore["last_played_mapname"] || @last_played_mapname
         @map_last_played.merge!( ystore["map_last_played"] || {} )
       end
     end
@@ -556,6 +553,7 @@ class Wallfly
         ystore["last_ia_time"]    = @last_ia_time
         ystore["last_ws_time"]    = @last_ws_time
         ystore["last_h_time"]     = @last_h_time
+        ystore["last_played_mapname"] = @last_played_mapname
         ystore["map_last_played"] = @map_last_played
       end
     ensure
@@ -587,7 +585,7 @@ class Wallfly
     if bans_stat
       changed = (@last_bans_fsize != bans_stat.size) || (@last_bans_mtime != bans_stat.mtime)
       if changed
-	replylog("reloading banfile: #@bans_fname")
+        replylog("reloading banfile: #@bans_fname")
         ystore = YAML::Store.new(@bans_fname)
         read_only = true
         ystore.transaction(read_only) do
@@ -628,7 +626,7 @@ class Wallfly
   end
   
   def replylog(str)
-    reply(">log #{str}")
+    reply(">log #{str}") unless @squelch_replylog
   end
 
   def run
@@ -638,108 +636,123 @@ class Wallfly
       @db.get_parse_new_data
       while dbline = @db.next_parsed_line
         puts dbline.raw_line
-        cmd = dbline.cmd.strip
-        if dbline.is_db_user?
-          if cmd =~ /\Awf,?\s+nextmap(?:\s+(\S.*))?\z/i
-            cmd_nextmap($1.to_s.strip)
-          elsif cmd =~ /\Awf,?\s+votemaps-set(?:\s+(\S.*))?\z/i
-            cmd_votemaps($1.to_s.strip)
-          elsif cmd =~ /\Awf,?\s+votemaps-add(?:\s+(\S.*))?\z/i
-            cmd_votemaps_add($1.to_s.strip)
-          elsif cmd =~ /\Awf,?\s+votemaps-remove(?:\s+(\S.*))?\z/i
-            cmd_votemaps_remove($1.to_s.strip)
-          elsif cmd =~ /\Awf,?\s+insmap(?:\s+(\S.*))?\z/i
-            cmd_insmap($1.to_s.strip)
-          elsif cmd =~ /\Awf,?\s+delmap(?:\s+(\S.*))?\z/i
-            cmd_delmap
-          elsif cmd =~ /\Awf,?\s+defflags(?:\s+(\S.*))?\z/i
-            cmd_defflags($1.to_s.strip)
-          elsif cmd =~ /\Awf,?\s+ban(?:\s+(\S+)(?:\s+(\S.*))?)?\z/i
-            cmd_ban($1, $2, :ban, dbline.speaker)
-          elsif cmd =~ /\Awf,?\s+unban(?:\s+(\S.*))?\z/i
-            cmd_unban($1, :ban)
-          elsif cmd =~ /\Awf,?\s+mute(?:\s+(\S+)(?:\s+(\S.*))?)?\z/i
-            cmd_ban($1, $2, :mute, dbline.speaker)
-          elsif cmd =~ /\Awf,?\s+stifle(?:\s+(\S+)(?:\s+(\S.*))?)?\z/i
-            cmd_stifle($1, $2, dbline.speaker)
-          elsif cmd =~ /\Awf,?\s+unmute(?:\s+(\S.*))?\z/i
-            cmd_unban($1, :mute)
-          elsif cmd =~ /\Awf,?\s+set(?:\s+(\S+)(?:\s+(\S.*))?)?\z/i
-            cmd_set($1, $2)
-          elsif cmd =~ /\Awf,?\s+unset(?:\s+(\S+)(?:\s+(\S.*))?)?\z/i
-            cmd_unset($1)
-          elsif cmd =~ /\Awf,?\s+logout\z/i
-            cmd_logout(dbline)
-          # leading-slash commands, for compatibility with old HAL commands:
-          elsif cmd =~ /\A\/probe(?:\s+(\S.*))?\z/i
-            cmd_probe($1)
-          end
-        elsif dbline.is_player_chat?
-          handled = false
-          if cmd =~ /\A(.*?):\s+([\w!]+)(?:\s+(\S.*))?\z/
-            playername, wfcmd, args = $1, $2, $3.to_s.strip
-            playername.gsub!(/\A\((.*)\)\z/, "\\1")  # assume (playername) is mm2 and strip parens
-            if wfcmd =~ /\A(!aliases|invite!|goto|mymap|nextmap)\z/
-              handled = true
-              wfarg, clnum, ip = parse_clnum_ip(args)
-              unless clnum.nil?
-                case wfcmd
-                # remember: we won't get here unless regex above matches
-                when "!aliases" then cmd_player_aliases(playername, wfarg, clnum, ip)
-                when "invite!"  then cmd_player_invite(playername, wfarg, clnum, ip)
-                when "goto"     then cmd_player_goto(playername, wfarg, clnum, ip)
-                when "mymap"    then cmd_player_mymap(playername, wfarg, clnum, ip)
-                when "nextmap"  then cmd_player_nextmap(playername, wfarg, clnum, ip)
-                end
-              else
-                safe_playername = make_rcon_quotesafe(playername)
-                reply(%{rcon say Sorry "#{safe_playername}", couldn't uniquely identify you. Is someone else using your name?})
-              end
-            end
-          elsif cmd =~ /\A(.*) changed name to (.*)\z/
-            update_name_change_tracking($1, $2)
-          end
-          if cmd =~ /\A(.*?):\s+(.+?)\s*\z/
-            # NOTE: playername may be wrong if name has colons and spaces in it :(
-            playername, chat = $1, $2
-            chat, clnum, ip = parse_clnum_ip(chat)
-            unless chat =~ /\Agoto\z/i
-              enforce_stifle(playername, clnum, ip)
-            end
-            unless handled
-              cmd_player_chatban_bindspam(playername, clnum, ip, chat)
-            end
-          end
-        elsif dbline.is_connect?
-          if cmd =~ /\[(\d+)\]\s+"([^"]*)"\s+(\d+\.\d+\.\d+\.\d+):\d+/
-            clnum, playername, ip = $1, $2, $3
-            handle_player_connect(playername, clnum, ip)
-          end
-        elsif dbline.is_enter_game?
-          if cmd =~ /\[(\d+)\]\s+"([^"]*)"\s+(\d+\.\d+\.\d+\.\d+):\d+/
-            clnum, playername, ip = $1, $2, $3
-            handle_player_enter_game(playername, clnum, ip)
-          end
-        elsif dbline.is_disconnect?
-          if cmd =~ /\[(\d+)\]\s+"([^"]*)"\s+(\d+\.\d+\.\d+\.\d+):\d+\s+score/
-            clnum, playername, ip = $1, $2, $3
-            handle_player_disconnect(playername, clnum, ip)
-          end
-        elsif dbline.is_map_over?
-          trigger_map_over
-        elsif dbline.is_name_change?
-          # 12:34:56 NAME_CHANGE: [11] "rat"     123.45.67.89:27901 was: MaryBottins
-          if cmd =~ /\[(\d+)\]\s+"([^"]*)"\s+(\d+\.\d+\.\d+\.\d+):\d+/
-            clnum, playername, ip = $1, $2, $3
-            handle_name_change(playername, clnum, ip)
-          end
-        end
+        parse_exec_line(dbline)
       end
       @done = true if @db.eof
       @db.wait_new_data unless @done
     end
   end
 
+  def parse_exec_line(dbline)
+    cmd = dbline.cmd.strip
+    speaker_is_admin = (dbline.is_db_user? && ADMIN_NAMES.include?(dbline.speaker))
+    if dbline.is_db_user?
+      if speaker_is_admin && cmd =~ /\Awf,?\s+exec(?:\s+(\S.*))?\z/i
+        cmd_exec($1.to_s.strip)
+      elsif speaker_is_admin && cmd =~ /\Awf,?\s+logout\z/i
+        cmd_logout
+      elsif cmd =~ /\Awf,?\s+nextmap(?:\s+(\S.*))?\z/i
+        cmd_nextmap($1.to_s.strip)
+      elsif cmd =~ /\Awf,?\s+votemaps-set(?:\s+(\S.*))?\z/i
+        cmd_votemaps($1.to_s.strip)
+      elsif cmd =~ /\Awf,?\s+votemaps-add(?:\s+(\S.*))?\z/i
+        cmd_votemaps_add($1.to_s.strip)
+      elsif cmd =~ /\Awf,?\s+votemaps-remove(?:\s+(\S.*))?\z/i
+        cmd_votemaps_remove($1.to_s.strip)
+      elsif cmd =~ /\Awf,?\s+insmap(?:\s+(\S.*))?\z/i
+        cmd_insmap($1.to_s.strip)
+      elsif cmd =~ /\Awf,?\s+delmap(?:\s+(\S.*))?\z/i
+        cmd_delmap
+      elsif cmd =~ /\Awf,?\s+defflags(?:\s+(\S.*))?\z/i
+        cmd_defflags($1.to_s.strip)
+      elsif cmd =~ /\Awf,?\s+ban(?:\s+(\S+)(?:\s+(\S.*))?)?\z/i
+        cmd_ban($1, $2, :ban, dbline.speaker)
+      elsif cmd =~ /\Awf,?\s+unban(?:\s+(\S.*))?\z/i
+        cmd_unban($1, :ban)
+      elsif cmd =~ /\Awf,?\s+mute(?:\s+(\S+)(?:\s+(\S.*))?)?\z/i
+        cmd_ban($1, $2, :mute, dbline.speaker)
+      elsif cmd =~ /\Awf,?\s+stifle(?:\s+(\S+)(?:\s+(\S.*))?)?\z/i
+        cmd_stifle($1, $2, dbline.speaker)
+      elsif cmd =~ /\Awf,?\s+unmute(?:\s+(\S.*))?\z/i
+        cmd_unban($1, :mute)
+      elsif cmd =~ /\Awf,?\s+set(?:\s+(\S+)(?:\s+(\S.*))?)?\z/i
+        cmd_set($1, $2)
+      elsif cmd =~ /\Awf,?\s+unset(?:\s+(\S+)(?:\s+(\S.*))?)?\z/i
+        cmd_unset($1)
+      # leading-slash commands, for compatibility with old HAL commands:
+      elsif cmd =~ /\A\/probe(?:\s+(\S.*))?\z/i
+        cmd_probe($1)
+      end
+    elsif dbline.is_player_chat?
+      handled = false
+      if cmd =~ /\A(.*?):\s+([\w!]+)(?:\s+(\S.*))?\z/
+        playername, wfcmd, args = $1, $2, $3.to_s.strip
+        playername.gsub!(/\A\((.*)\)\z/, "\\1")  # assume (playername) is mm2 and strip parens
+        if wfcmd =~ /\A(!aliases|invite!|goto|mymap|nextmap)\z/
+          handled = true
+          wfarg, clnum, ip = parse_clnum_ip(args)
+          unless clnum.nil?
+            case wfcmd
+            # remember: we won't get here unless regex above matches
+            when "!aliases" then cmd_player_aliases(playername, wfarg, clnum, ip)
+            when "invite!"  then cmd_player_invite(playername, wfarg, clnum, ip)
+            when "goto"     then cmd_player_goto(playername, wfarg, clnum, ip)
+            when "mymap"    then cmd_player_mymap(playername, wfarg, clnum, ip)
+            when "nextmap"  then cmd_player_nextmap(playername, wfarg, clnum, ip)
+            end
+          else
+            safe_playername = make_rcon_quotesafe(playername)
+            reply(%{rcon say Sorry "#{safe_playername}", couldn't uniquely identify you. Is someone else using your name?})
+          end
+        end
+      elsif cmd =~ /\A(.*) changed name to (.*)\z/
+        update_name_change_tracking($1, $2)
+      end
+      if cmd =~ /\A(.*?):\s+(.+?)\s*\z/
+        # NOTE: playername may be wrong if name has colons and spaces in it :(
+        playername, chat = $1, $2
+        chat, clnum, ip = parse_clnum_ip(chat)
+        unless chat =~ /\Agoto\z/i
+          enforce_stifle(playername, clnum, ip)
+        end
+        unless handled
+          cmd_player_chatban_bindspam(playername, clnum, ip, chat)
+        end
+      end
+    elsif dbline.is_connect?
+      if cmd =~ /\[(\d+)\]\s+"([^"]*)"\s+(\d+\.\d+\.\d+\.\d+):\d+(?:\s+ncl:(\d+)\s+apl:(\d+))?/
+        clnum, playername, ip = $1, $2, $3
+        ncl, apl = $4, $5
+        update_client_counts(ncl.to_i, apl.to_i) if ncl
+        handle_player_connect(playername, clnum, ip)
+      end
+    elsif dbline.is_enter_game?
+      if cmd =~ /\[(\d+)\]\s+"([^"]*)"\s+(\d+\.\d+\.\d+\.\d+):\d+/
+        clnum, playername, ip = $1, $2, $3
+        handle_player_enter_game(playername, clnum, ip)
+      end
+    elsif dbline.is_disconnect?
+      if cmd =~ /\[(\d+)\]\s+"([^"]*)"\s+(\d+\.\d+\.\d+\.\d+):\d+(?:\s+ncl:(\d+)\s+apl:(\d+))?/
+        clnum, playername, ip = $1, $2, $3
+        ncl, apl = $4, $5
+        update_client_counts(ncl.to_i, apl.to_i) if ncl
+        handle_player_disconnect(playername, clnum, ip)
+      end
+    elsif dbline.is_map_over?
+      if cmd =~ /\s+ncl:(\d+)\s+apl:(\d+)\z/
+        ncl, apl = $1, $2
+        update_client_counts(ncl.to_i, apl.to_i) if ncl        
+      end
+      trigger_map_over
+    elsif dbline.is_name_change?
+      # 12:34:56 NAME_CHANGE: [11] "rat"     123.45.67.89:27901 was: MaryBottins
+      if cmd =~ /\[(\d+)\]\s+"([^"]*)"\s+(\d+\.\d+\.\d+\.\d+):\d+/
+        clnum, playername, ip = $1, $2, $3
+        handle_name_change(playername, clnum, ip)
+      end
+    end
+  end
+  
   def cur_time; Time.now end
 
   def cur_maprot; @maprot end
@@ -755,6 +768,33 @@ class Wallfly
     end
   end
 
+  def cmd_exec(fname)
+    fpath = File.join("./wallfly/config", fname)
+    if test(?f, fpath)
+      IO.foreach(fpath) do |line|
+        line.chomp!
+        line.strip!
+        next if line.empty? || line =~ /\A#/
+        exec_line(line)
+      end
+    else
+      reply("file not found: #{fpath.inspect}")
+    end
+  end
+
+  def exec_line(line)
+    if line =~ /\Aset(?:\s+(\S+)(?:\s+(\S.*))?)?\z/i
+      cmd_set($1, $2)
+    else
+      replylog("unknown cmd: #{line.inspect}")
+    end
+  end
+  
+  def cmd_logout
+    reply("cyas!")
+    @done = true
+  end
+  
   def legal_varname?(varname)
     varname =~ /\A[\w\/!_-]+\z/
   end
@@ -808,7 +848,7 @@ class Wallfly
   def cmd_ban(ban_expr, reason, ban_type, admin_name, flags={})
     if ban_expr
       if reason && !reason.to_s.strip.empty?
-	reason = gen_ban_reason(reason, ban_type, admin_name, flags)
+        reason = gen_ban_reason(reason, ban_type, admin_name, flags)
         ban, err = memo_compile_ban(ban_expr)
         if err
           reply(%{^aFailed to compile #{bt('ban',ban_type)} expression: #{err}})
@@ -874,7 +914,7 @@ class Wallfly
   def cmd_set(varname, value)
     if varname
       if not legal_varname?(varname)
-        reply("illegal characters in varname")
+        reply("illegal characters in varname #{varname.inspect}")
       else
         if value
           vars[varname] = value
@@ -1156,6 +1196,8 @@ class Wallfly
     deny_msg  # nil means no error
   end
 
+  MYMAP_APL_LIMIT_REDUCE = 2.0 / 3.0
+  
   def mymap_allowed(mapname, dmflags)
     deny_msg = nil  # no error
     safe_mapname = make_rcon_quotesafe(mapname)
@@ -1175,8 +1217,18 @@ class Wallfly
     deny_msg
   end
 
+  def active_players_ok_for_map(mapname, limit_scale=1.0)
+    (! @active_player_count) || (@active_player_count >= map_minclients(mapname, limit_scale))
+  end
+  
+  def get_random_allowed_maplist
+    votemaps.keys.select do |m|
+      (minutes_until_next_play(m) < MINUTES_EPSILON)  &&  active_players_ok_for_map(m)
+    end
+  end
+  
   def get_random_allowed_map
-    allowed_maps = votemaps.keys.select {|m| minutes_until_next_play(m) < MINUTES_EPSILON}
+    allowed_maps = get_random_allowed_maplist
     allowed_maps = votemaps.keys if allowed_maps.empty? 
     return "no_maps_available" if allowed_maps.empty?  # should never happen
     mapname = allowed_maps[ rand(allowed_maps.length) ]
@@ -1206,8 +1258,8 @@ class Wallfly
         else
           mapname.downcase!
           mapname = get_random_allowed_map if mapname == "random"
+          safe_mapname = make_rcon_quotesafe(mapname)
           if not votemaps.has_key? mapname
-            safe_mapname = make_rcon_quotesafe(mapname)
             reply(%{rcon sv !say_person cl #{clnum} unrecognized map: "#{safe_mapname}", valid maps are:})
             spew_maplist_to_client(clnum)
           else
@@ -1222,6 +1274,13 @@ class Wallfly
               cur_maprot.remove_by_key mspec.key
               cur_maprot.push_oneshot mspec
               show_player_nextmaps
+              
+              if ! active_players_ok_for_map(mapname)  # don't reduce here, to broaden the range the warning will be issued
+                needed = map_minclients(mapname, MYMAP_APL_LIMIT_REDUCE)
+                msg = %{BTW: Map '#{safe_mapname}' will be skipped if there are not at least #{needed} active players.}
+                reply(%{rcon sv !say_person cl #{clnum} #{msg}})
+              end
+              
               save_state
             end
           end
@@ -1245,6 +1304,11 @@ class Wallfly
     show_player_nextmaps
   end
 
+  def update_client_counts(ncl, apl)
+    @active_player_count = apl
+    # reply("...got client counts: ncl=#{ncl} apl=#{apl}")
+  end
+  
   def handle_player_connect(playername, clnum, ip)
     reset_stifle_for_clnum(clnum)
     enforce_bans(playername, clnum, ip, entering_game=false, changing_name=false)
@@ -1263,15 +1327,6 @@ class Wallfly
   def handle_name_change(playername, clnum, ip)
     return if playername == "pwsnskle"
     enforce_bans(playername, clnum, ip, entering_game=false, changing_name=true)
-  end
-
-  def cmd_logout(dbline)
-    if dbline.speaker == "quadz"
-      reply("cyas!")
-      @done = true
-    else
-      reply("Ah! Can do! ... But won't.")
-    end
   end
 
   def cmd_probe(clnum)
@@ -1293,11 +1348,18 @@ class Wallfly
 
   def trigger_map_over
     # reply("rcon say NOTICE: tastyspleen.net IP's will be changing in a few hours. See website for details.")
+    no_players_last_map = @last_played_mapname && @active_player_count && @active_player_count.zero?
+    if no_players_last_map
+      replylog("(no active players last map, removing #{@last_played_mapname.inspect} from recently played list)")
+      @map_last_played.delete(@last_played_mapname)
+    end
+    
     if nextmap = cur_maprot.peek_next
       if check_debounce_nextmap_trigger
         nextmap = advance_to_next_playable_map(nextmap)
         if nextmap
           play_map(nextmap, 3.75)
+          @last_played_mapname = nextmap.shortname
           cur_maprot.advance
           save_state
         end
@@ -1307,33 +1369,87 @@ class Wallfly
     end
   end
 
+  def map_minclients(map_shortname, limit_scale=1.0)
+    varname = "maps/#{map_shortname}/minclients"
+    (@vars[varname].to_i * limit_scale).round
+  end
+  
   # Ugh. If we skipped some maps, we could possibly end up
   # pointing to a map that has been played too recently
   # after the tidy.  So allow a second attempt to skip
   # again if needed... (after 2nd attempt, just go with
   # whatever we ended up with.)
   def advance_to_next_playable_map(nextmap)
+    apl_skipped_oneshot_maps = []
+    best_fit_map = nil
+    best_fit_minclients = nil
     iter = 0
     begin
       skipped_some_maps = false
       cur_maprot.length.times do
-        if (! nextmap.forceplay) && minutes_until_next_play(nextmap.shortname) >= 2
-          replylog(%{(Skipping map "#{nextmap.shortname}" in playlist, because played too recently.)})
+        break if nextmap.forceplay
+        shortname = nextmap.shortname
+        reason = nil
+        
+        if (skip_map = (minutes_until_next_play(shortname) >= 2))
+          reason = %{(Skipping map "#{shortname}" in playlist, because played too recently.)}
+        end
+        
+        if (! skip_map) && (apl = @active_player_count)
+          reduce = (nextmap.oneshot) ? MYMAP_APL_LIMIT_REDUCE : 1.0
+          mincl = map_minclients(shortname, reduce)
+          if iter.zero?
+            if best_fit_minclients.nil? || (mincl < best_fit_minclients)
+              best_fit_map = shortname
+              best_fit_minclients = mincl
+            end
+            skip_map = (apl < mincl)
+          else
+            skip_map = (best_fit_minclients.nil?) ? (apl < mincl) : (shortname != best_fit_map)
+          end
+          
+          if skip_map
+            if nextmap.oneshot
+              apl_skipped_oneshot_maps << shortname
+            end
+            reason = %{(Skipping map "#{shortname}" in playlist, because active_players #{apl} vs map_minclients #{mincl}. (best_fit=#{best_fit_map.inspect}))}
+          end
+        end
+        
+        if skip_map
+          replylog(reason) if reason
           cur_maprot.advance(false)  # skip
           skipped_some_maps = true
           nextmap = cur_maprot.peek_next
-          break unless nextmap
+          break if nextmap.nil?
         else
-          break  # we're good
+          break  # found the map we want
         end
       end
+      
       if skipped_some_maps
         cur_maprot.tidy_after_skipped_maps
-	nextmap = cur_maprot.peek_next
+        nextmap = cur_maprot.peek_next
       end
+      
       iter += 1
       try_again = nextmap && skipped_some_maps && iter <= 2
     end while try_again
+    
+    apl_skipped_oneshot_maps.uniq!
+    apl_skipped_oneshot_maps.delete(nextmap.shortname) if nextmap  # sometimes we were forced to choose one we thought we were skipping if we ran out of better alternatives
+    unless apl_skipped_oneshot_maps.empty?
+      safename = make_rcon_quotesafe(apl_skipped_oneshot_maps.first)
+      msg = "Sorry, skipping map '#{safename}'"
+      if (n_others = (apl_skipped_oneshot_maps.length - 1)) > 0
+        msg << ", and #{n_others} other"
+        msg << "s" if (n_others > 1)
+        msg << ","
+      end
+      msg << " because not enough active players."
+      reply("rcon say #{msg}")
+    end
+    
     nextmap
   end
 

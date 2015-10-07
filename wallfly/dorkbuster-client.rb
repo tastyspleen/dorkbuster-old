@@ -155,7 +155,7 @@ class DBLine
   end
   
   protected
-  
+
   def parse(line)
 # $stderr.puts "dbline.parse: #{line.inspect}"
     line = ANSI.strip(line)
@@ -170,8 +170,8 @@ class DBLine
           case @cmd
             # WARNING: without the \z, Fraglimit hit will be fooled by
             # 2=Fraglimit hit. changed name to blah
-            when /\A(Fraglimit(?: of \d+)? hit|JailPoint Limit Hit)\.\z/ then @kind = KIND_FRAGLIMIT_HIT
-            when /\ATimelimit(?: of \d+)? hit\.\z/ then @kind = KIND_TIMELIMIT_HIT
+            when /\A(Fraglimit(?: of \d+)? hit|JailPoint Limit Hit)\.(?:\s+ncl:(\d+)\s+apl:(\d+))?\z/ then @kind = KIND_FRAGLIMIT_HIT
+            when /\ATimelimit(?: of \d+)? hit\.(?:\s+ncl:(\d+)\s+apl:(\d+))?\z/ then @kind = KIND_TIMELIMIT_HIT
             else @kind = KIND_WALLFLY_CLIENT
           end
         when "CONNECT" then @kind = KIND_CONNECT
@@ -209,8 +209,7 @@ class DBLine
     # command strings, but still...)
     @speaker.tr!("$",".")
   end
-  
-end
+end # DBLine
 
 
 class DorkBusterClient
