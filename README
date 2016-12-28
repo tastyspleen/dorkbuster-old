@@ -1,19 +1,9 @@
-Welcome.  This is a prerelease of dorkbuster.
+This software is being placed online for archival purposes.
 
-There isn't much documentation yet, sorry.
+As a system for administering Quake2 servers, it has not
+aged particularly well.  (It is somewhat clunky to use, and
+rather difficult to install.)
 
-See the files, users-example.cfg and server-example.cfg for
-information on two files you will need to rename and edit
-to get dorkbuster running.
-
-You'll also need ruby to run dorkbuster.  Check the version
-of ruby installed in your system with: ruby --version
-
-You'll want ruby version 1.8.1 or greater.
-
-
-Regards,
-
-Bill
-<billk@cts.com>
+Assume LICENSE is GPL v2 unless otherwise stated in specific
+source files.
 
